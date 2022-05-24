@@ -1,8 +1,10 @@
 package cmd
 
 import (
+	"crypto/tls"
 	"fmt"
 	"image/jpeg"
+	"net/http"
 	"os"
 	"path"
 	"runtime"
@@ -28,8 +30,18 @@ const (
 func runBusinessLogic(mangaID string) error {
 	retry := retryablehttp.NewClient()
 	retry.Logger = nil
-	http := retry.StandardClient()
-	client := md.NewClient().WithHTTPClient(http)
+	httpClient := retry.StandardClient()
+	fmt.Printf("%t", retry.HTTPClient.Transport)
+	if t, ok := retry.HTTPClient.Transport.(*http.Transport); ok {
+		fmt.Println("Modifying http client to allow tls v1")
+		if t.TLSClientConfig == nil {
+			t.TLSClientConfig = &tls.Config{}
+		} else {
+			t.TLSClientConfig = t.TLSClientConfig.Clone() // make a clone so we can freely modify it
+		}
+		t.TLSClientConfig.MinVersion = tls.VersionTLS10 // Allow tls v1
+	}
+	client := md.NewClient().WithHTTPClient(httpClient)
 
 	manga, err := businessDownloadManga(client, mangaID)
 	if err != nil {
@@ -47,7 +59,7 @@ func runBusinessLogic(mangaID string) error {
 	bar.Set("prefix", "Covers")
 	bar.Set(pb.CleanOnFinish, true)
 	bar.Start()
-	dl := formats.NewMangadexDownloader(client, http, progress(bar))
+	dl := formats.NewMangadexDownloader(client, httpClient, progress(bar))
 	covers, err := formats.MangadexCovers(dl, manga)
 	if err != nil {
 		return err
@@ -80,7 +92,7 @@ func runBusinessLogic(mangaID string) error {
 			bar.Set("message", "Skipped")
 			bar.Finish()
 		default:
-			dl := formats.NewMangadexDownloader(client, http, progress(bar))
+			dl := formats.NewMangadexDownloader(client, httpClient, progress(bar))
 			chapters := volume.Sorted()
 			pages, err := formats.MangadexPages(dl, chapters)
 			bar.Finish()
